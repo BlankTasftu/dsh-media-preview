@@ -194,6 +194,8 @@ node --test "tests/*.test.mjs"     # 81 个用例
 
 `tests/parity.test.mjs` 会解析客户端源码里的格式表并与宿主模块逐项比对 —— 两边各有一份表（client bundle 不能 import 宿主模块），改漏一边会当场失败。
 
+`tests/version.test.mjs` 把**版本规则**变成会失败的检查：`package.json` 的 `version` 必须是合法 semver，`CHANGELOG.md` 必须有对应小节且是最新的一节。规则本身写在 [`CHANGELOG.md`](CHANGELOG.md) 开头 —— 简言之：改了用户装到的东西就要有新版本号，每个 tag 都建一个发行版，三者（`version` / CHANGELOG 小节 / tag 名）必须一致。
+
 `tests/integration-real-fs.test.mjs` 需要真实素材：把任意 mp3 放进仓库旁的 `media-samples/`，或用 `DSH_MEDIA_SAMPLE_DIR=<目录>` 指定；没有素材时这一层**跳过而不是假装通过**。
 
 代码与安全审计的结果、以及"只以插件形式运行"的证据，见 [`docs/VERIFICATION.md`](docs/VERIFICATION.md) 第五、六节。两个只读审计脚本随仓库发布，可随时复跑：
