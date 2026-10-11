@@ -32,6 +32,8 @@ function createReactStub() {
    */
   const instances = new Map()
   const effects = []
+  /** 宿主元素替身：标签名 → 元素（供用例直接摆布 `seekable` / `duration` 等）。 */
+  const dom = new Map()
   let active = null
   let cursor = 0
 
@@ -116,11 +118,64 @@ function createReactStub() {
       }
       return render(rendered, `${key}/r`)
     }
+    // 宿主元素：把 ref 真的交出去，否则 `mediaRef.current` 永远是 null，
+    // 组件里那些"读元素状态"的分支（seekable 探测、错误诊断）在测试里根本跑不到。
+    if (props && props.ref !== undefined && props.ref !== null) {
+      const element = elementFor(type)
+      if (typeof props.ref === 'function') props.ref(element)
+      else if (typeof props.ref === 'object') props.ref.current = element
+    }
     return { type, props, children: children.map((child, index) => render(child, `${key}.${index}`)) }
+  }
+
+  /** 每个宿主标签造一个够用的元素替身（媒体元素带上 seekable/时长等字段）。 */
+  function elementFor(tag) {
+    const name = String(tag)
+    if (name === 'video' || name === 'audio') {
+      const element = {
+        tagName: name.toUpperCase(),
+        currentTime: 0,
+        duration: Number.NaN,
+        videoWidth: 0,
+        videoHeight: 0,
+        paused: true,
+        ended: false,
+        error: null,
+        volume: 1,
+        muted: false,
+        playbackRate: 1,
+        loop: false,
+        /** 默认"完全不可拖"；需要的用例自己改成覆盖整段的区间。 */
+        seekable: { length: 0, start: () => 0, end: () => 0 },
+        buffered: { length: 0, start: () => 0, end: () => 0 },
+        play: () => Promise.resolve(),
+        pause: () => {},
+        load: () => {},
+        requestFullscreen: () => Promise.resolve(),
+        parentElement: null,
+      }
+      dom.set(name, element)
+      return element
+    }
+    return {
+      tagName: name.toUpperCase(),
+      style: {},
+      dataset: {},
+      href: '',
+      download: '',
+      appendChild() {},
+      click() {},
+      getContext: () => ({ drawImage() {} }),
+      toDataURL: () => 'data:,',
+      setAttribute() {},
+      focus() {},
+    }
   }
 
   return {
     React,
+    /** 宿主元素替身（标签名 → 元素）。 */
+    dom,
     /** 从根元素开始渲染整棵树（含嵌套函数组件）。 */
     renderRoot(element) {
       effects.length = 0
@@ -290,7 +345,7 @@ function createClientCtx() {
 function renderComponent(component, props, react) {
   const tree = react.renderRoot(react.React.createElement(component, props))
   const cleanups = react.runEffects()
-  return { tree, cleanups }
+  return { tree, cleanups, dom: react.dom }
 }
 
 /**
@@ -523,12 +578,107 @@ test('正文：把真正的滚动容器上报为 scrollport（owner 契约：nul
       (node) => node.props && node.props.className === 'dshmp-scroll' && typeof node.props.ref === 'function',
     )[0]
     assert.ok(scroller, '正文必须把滚动容器交给 owner')
+    // 渲染时 ref 已被调用过一次（真实 React 挂载时也是这么做的），
+    // 这里只针对"手动转发 / 卸载归还 null"这两步做断言。
+    const before = reported.length
     const node = { id: 'scrollport' }
     scroller.props.ref(node)
-    assert.deepEqual(reported, [node])
+    assert.deepEqual(reported.slice(before), [node])
     // 卸载时上报 null：owner 会把滚动职责还给共享正文。
     scroller.props.ref(null)
-    assert.deepEqual(reported, [node, null])
+    assert.deepEqual(reported.slice(before), [node, null])
+  } finally {
+    bundle.restore()
+  }
+})
+
+test('拖动完全没反应时也要自救：主动探测 seekable 后自动完整缓冲（0.3.2 回归）', async () => {
+  // 报障："进度条还是没有实际作用，不能调整播放进度"。
+  //
+  // 0.3.0 只挂了 `seeking` 事件去判断拖动失败 —— 但如果浏览器根本不接受这次拖动，
+  // **连 seeking 都不会触发**，插件于是什么都不做，用户看到的就是"拖了没反应"。
+  // 所以必须主动看 `video.seekable`：它为空、或覆盖不到整个时长，就意味着拖动这条路
+  // 的收益是零，应当直接换成完整缓冲（Blob 天然可自由 seek）。
+  const bundle = loadBundle()
+  try {
+    const { ctx, log } = createClientCtx()
+    bundle.exports.apply(ctx)
+    const MediaBody = log.slots.find((entry) => entry.options.name === 'sidebar.right.tab.document').component
+
+    const mock = createRangedFetch(300 * 1024, 64 * 1024)
+    globalThis.fetch = mock.fetch
+    globalThis.URL.createObjectURL = () => 'blob:seekable'
+    globalThis.URL.revokeObjectURL = () => {}
+
+    const props = {
+      t: (key) => key,
+      resourceAddress: 'dsh-resource-file-session-s1-unseekable.mp4',
+      content: { kind: 'renderer', revision: 1, loaded: () => {}, failed: () => {}, reload: () => {} },
+      useResource: () => ({ status: 'live', value: { absolutePath: 'C:\\ws\\unseekable.mp4', version: 'v1', bytes: 300 * 1024 } }),
+    }
+    const first = renderComponent(MediaBody, props, bundle.react)
+    const videoNode = findAll(first.tree, (node) => node.type === 'video')[0]
+    const element = first.dom.get('video')
+    assert.ok(videoNode && element, '应当渲染出 <video> 并且 ref 指向元素替身')
+
+    // 浏览器说"这个资源完全不可拖"：seekable 为空，但时长与画面尺寸正常。
+    element.duration = 10
+    element.videoWidth = 640
+    element.videoHeight = 360
+    element.seekable = { length: 0, start: () => 0, end: () => 0 }
+
+    // 元数据与 canplay 之后，插件不等用户去拖，自己就该发现这一点。
+    videoNode.props.onLoadedMetadata({ currentTarget: element })
+    videoNode.props.onCanPlay({ currentTarget: element })
+    await settle()
+
+    const after = renderComponent(MediaBody, props, bundle.react)
+    const videos = findAll(after.tree, (node) => node.type === 'video')
+    assert.ok(mock.calls.length > 0, '应当自动开始逐段取回整个文件')
+    assert.equal(videos[0].props.src, 'blob:seekable', '应当改用可自由 seek 的 Blob URL')
+    // 用户要能看懂刚才发生了什么：诊断行必须写明"浏览器认为不可拖动"，
+    // 并且给出一句交代（缓冲完成后换成"已通过 N 段 206 完整缓冲"）。
+    const text = JSON.stringify(after.tree)
+    assert.match(text, /seekableNone/, '可拖范围那一行应当显示"不可拖动"')
+    assert.match(text, /bufferedNoticeRanged|seekFixing/, '应当有一句说明去向的提示')
+  } finally {
+    bundle.restore()
+  }
+})
+
+test('浏览器说可拖时不要多事：seekable 覆盖整段就保持直连流（不缓冲）', async () => {
+  const bundle = loadBundle()
+  try {
+    const { ctx, log } = createClientCtx()
+    bundle.exports.apply(ctx)
+    const MediaBody = log.slots.find((entry) => entry.options.name === 'sidebar.right.tab.document').component
+
+    const mock = createRangedFetch(300 * 1024, 64 * 1024)
+    globalThis.fetch = mock.fetch
+
+    const props = {
+      t: (key) => key,
+      resourceAddress: 'dsh-resource-file-session-s1-seekable.mp4',
+      content: { kind: 'renderer', revision: 1, loaded: () => {}, failed: () => {}, reload: () => {} },
+      useResource: () => ({ status: 'live', value: { absolutePath: 'C:\\ws\\seekable.mp4', version: 'v1', bytes: 300 * 1024 } }),
+    }
+    const first = renderComponent(MediaBody, props, bundle.react)
+    const videoNode = findAll(first.tree, (node) => node.type === 'video')[0]
+    const element = first.dom.get('video')
+
+    element.duration = 10
+    element.videoWidth = 640
+    element.videoHeight = 360
+    element.seekable = { length: 1, start: () => 0, end: () => 10 }
+
+    videoNode.props.onLoadedMetadata({ currentTarget: element })
+    videoNode.props.onCanPlay({ currentTarget: element })
+    await settle()
+
+    const after = renderComponent(MediaBody, props, bundle.react)
+    const videos = findAll(after.tree, (node) => node.type === 'video')
+    assert.equal(mock.calls.length, 0, '可拖的资源不该被无谓地整份下载')
+    assert.match(videos[0].props.src, /api\/media/, '仍然直连流地址')
   } finally {
     bundle.restore()
   }
