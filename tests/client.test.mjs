@@ -646,7 +646,12 @@ test('拖动完全没反应时也要自救：主动探测 seekable 后自动完�
   }
 })
 
-test('浏览器说可拖时不要多事：seekable 覆盖整段就保持直连流（不缓冲）', async () => {
+test('后台准备可拖动版本：先流式起播，取完换成 Blob 并保留播放位置（0.4.0）', async () => {
+  // 为什么要有这条路：报障是"能拖动，但进度不会变，滑块弹回去" —— 浏览器接受了
+  // 拖动手势却拒绝这次 seek。也就是说在这个传输层上"让媒体元素自己 seek"走不通，
+  // 于是插件边播边在后台取回整份，就绪后换成内存 Blob（时长与 seek 由浏览器内存
+  // 模型决定，不存在拒绝 seek）。这里断言：① 起播不等下载；② 就绪后换源；
+  // ③ 播放位置与播放状态被接上，不会回到 0 秒。
   const bundle = loadBundle()
   try {
     const { ctx, log } = createClientCtx()
@@ -655,30 +660,48 @@ test('浏览器说可拖时不要多事：seekable 覆盖整段就保持直连�
 
     const mock = createRangedFetch(300 * 1024, 64 * 1024)
     globalThis.fetch = mock.fetch
+    globalThis.URL.createObjectURL = () => 'blob:warm'
+    globalThis.URL.revokeObjectURL = () => {}
 
     const props = {
       t: (key) => key,
-      resourceAddress: 'dsh-resource-file-session-s1-seekable.mp4',
+      resourceAddress: 'dsh-resource-file-session-s1-warm.mp4',
       content: { kind: 'renderer', revision: 1, loaded: () => {}, failed: () => {}, reload: () => {} },
-      useResource: () => ({ status: 'live', value: { absolutePath: 'C:\\ws\\seekable.mp4', version: 'v1', bytes: 300 * 1024 } }),
+      useResource: () => ({ status: 'live', value: { absolutePath: 'C:\\ws\\warm.mp4', version: 'v1', bytes: 300 * 1024 } }),
     }
+    // ① 起播：不等后台下载完成，src 仍是直连流地址。
     const first = renderComponent(MediaBody, props, bundle.react)
-    const videoNode = findAll(first.tree, (node) => node.type === 'video')[0]
+    const firstVideo = findAll(first.tree, (node) => node.type === 'video')[0]
+    assert.match(firstVideo.props.src, /api\/media/, '应当立刻用流地址起播，不为后台准备而等待')
     const element = first.dom.get('video')
-
     element.duration = 10
     element.videoWidth = 640
     element.videoHeight = 360
     element.seekable = { length: 1, start: () => 0, end: () => 10 }
+    firstVideo.props.onLoadedMetadata({ currentTarget: element })
 
-    videoNode.props.onLoadedMetadata({ currentTarget: element })
-    videoNode.props.onCanPlay({ currentTarget: element })
+    // ② 后台取完 → 换源，且位置被接上。
+    element.currentTime = 4
+    element.paused = false
     await settle()
-
     const after = renderComponent(MediaBody, props, bundle.react)
     const videos = findAll(after.tree, (node) => node.type === 'video')
-    assert.equal(mock.calls.length, 0, '可拖的资源不该被无谓地整份下载')
-    assert.match(videos[0].props.src, /api\/media/, '仍然直连流地址')
+    assert.ok(mock.calls.length > 0, '后台应当逐段取回整个文件')
+    assert.equal(videos[0].props.src, 'blob:warm', '就绪后应当换成可自由 seek 的 Blob URL')
+
+    // 换源会触发一次 loadedmetadata：此时必须把位置接回 4 秒并继续播。
+    const played = []
+    element.play = () => {
+      played.push(element.currentTime)
+      return Promise.resolve()
+    }
+    element.paused = true
+    element.currentTime = 0
+    videos[0].props.onLoadedMetadata({ currentTarget: element })
+    assert.equal(element.currentTime, 4, '换源后必须回到原来的播放位置')
+    assert.equal(played.length, 1, '换源前在播的话，换源后要继续播')
+    const text = JSON.stringify(after.tree)
+    assert.match(text, /warmupReady|warmupProgress/, '应当有一句说明"已可自由拖动 / 正在准备"')
   } finally {
     bundle.restore()
   }
@@ -762,7 +785,18 @@ test('视频直连播放失败 → 自动完整缓冲，改用可自由 seek 的
     const MediaBody = log.slots.find((entry) => entry.options.name === 'sidebar.right.tab.document').component
 
     const mock = createRangedFetch(300 * 1024, 64 * 1024)
-    globalThis.fetch = mock.fetch
+    // 后台"可拖动版本"先失败（相当于取字节这条路暂时不通），随后直连播放也失败
+    // → 这时才轮到阻塞式完整缓冲接手。这样才真的走到了 onError 那条分支。
+    let failWarmup = 1
+    globalThis.fetch = async (url, init) => {
+      if (failWarmup > 0) {
+        failWarmup -= 1
+        throw new Error('background fetch failed')
+      }
+      return mock.fetch(url, init)
+    }
+    const warn = console.warn
+    console.warn = () => {}
 
     const props = {
       t: (key) => key,
@@ -776,6 +810,9 @@ test('视频直连播放失败 → 自动完整缓冲，改用可自由 seek 的
     const video = findAll(first.tree, (node) => node.type === 'video')[0]
     assert.ok(video)
     assert.match(video.props.src, /^dsh-app:\/\/app\/api\/media\?/)
+
+    // 后台准备已经失败（否则 onError 会等它、不起第二遍下载）。
+    await settle()
 
     // Chromium 打不开容器（索引在末尾、取不到尾部）时就是这个错。
     video.props.onError({ currentTarget: { error: { code: 4, message: 'DEMUXER_ERROR_COULD_NOT_OPEN' } } })
@@ -800,6 +837,7 @@ test('视频直连播放失败 → 自动完整缓冲，改用可自由 seek 的
     // 传输事实要写进元数据，别让"到底发生了什么"变成谜。
     assert.ok(findAll(after.tree, (node) => node.children.includes('transportRanged')).length > 0)
     assert.ok(findAll(after.tree, (node) => node.children.includes('bufferedNoticeRanged')).length > 0)
+    console.warn = warn
   } finally {
     bundle.restore()
   }
@@ -843,14 +881,16 @@ test('结构性不支持的容器（mkv）不自动缓冲：直接给诊断卡�
   }
 })
 
-test('mp4 打不开时解释为"索引在末尾"，且超大文件只给手动按钮不自动下载', () => {
+test('mp4 打不开时解释为"索引在末尾"，且超过后台准备上限的文件只给手动按钮', () => {
   const bundle = loadBundle()
   try {
     const { ctx, log } = createClientCtx()
     bundle.exports.apply(ctx)
     const MediaBody = log.slots.find((entry) => entry.options.name === 'sidebar.right.tab.document').component
 
-    const huge = 300 * 1024 * 1024
+    // 2 GiB：超过后台准备上限（1 GiB），也超过自动缓冲上限（256 MiB）——
+    // 正是"不自动替用户吃掉内存"的那一档。
+    const huge = 2 * 1024 * 1024 * 1024
     const props = {
       t: (key) => key,
       resourceAddress: 'dsh-resource://file/session/s1/big.mp4',
@@ -884,7 +924,18 @@ test('取消缓冲后不会再自动开始（否则会变成取消/重启的死�
     const MediaBody = log.slots.find((entry) => entry.options.name === 'sidebar.right.tab.document').component
 
     const mock = createRangedFetch(300 * 1024, 64 * 1024)
-    globalThis.fetch = mock.fetch
+    // 先让后台"可拖动版本"失败，好让 onError 走到阻塞式缓冲那条分支
+    // （否则 onError 会等后台取完，不会再起一遍整份下载）。
+    let failWarmup = 1
+    globalThis.fetch = async (url, init) => {
+      if (failWarmup > 0) {
+        failWarmup -= 1
+        throw new Error('background fetch failed')
+      }
+      return mock.fetch(url, init)
+    }
+    const warn = console.warn
+    console.warn = () => {}
 
     const props = {
       t: (key) => key,
@@ -895,6 +946,8 @@ test('取消缓冲后不会再自动开始（否则会变成取消/重启的死�
     }
 
     const first = renderComponent(MediaBody, props, bundle.react)
+    // 等后台准备失败落地（失败后它就不在"进行中"了，onError 才会自己接手）。
+    await settle()
     findAll(first.tree, (node) => node.type === 'video')[0].props.onError({
       currentTarget: { error: { code: 4, message: 'DEMUXER_ERROR_COULD_NOT_OPEN' } },
     })
@@ -910,6 +963,7 @@ test('取消缓冲后不会再自动开始（否则会变成取消/重启的死�
     const after = renderComponent(MediaBody, props, bundle.react)
     assert.equal(findAll(after.tree, (node) => node.type === 'video').length, 0)
     assert.ok(JSON.stringify(after.tree).includes('bufferRetry'), '应当给出手动缓冲按钮而不是再次自动缓冲')
+    console.warn = warn
   } finally {
     bundle.restore()
   }
