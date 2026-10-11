@@ -5,6 +5,8 @@
 - **右侧文档预览**（主功能）：在 Files 树里点一个 `.mp4` / `.mp3`，右侧预览标签就会显示播放器 —— 进度条可以拖，大文件边下边播，不整块进内存。
 - **左侧媒体库面板**（附带）：侧边栏图标栏多一个图标，点开列出工作区里所有能播的媒体，就地播放。
 
+**版本与改动**：[发行版说明（Releases）](https://github.com/BlankTasftu/dsh-media-preview/releases) · [更新日志（CHANGELOG）](CHANGELOG.md) · [验收与审计记录](docs/VERIFICATION.md)
+
 ---
 
 ## 为什么需要这个插件
