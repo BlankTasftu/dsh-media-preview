@@ -18,8 +18,8 @@ const VIDEO = 'C:\\ws\\clip.mp4'
 /**
  * 造一个只有 clip.mp4 的 ctx。
  *
- * @param options - `{ type, maxChunkBytes, withWorkspaces }`。
- * @returns `{ ctx, cfg }`。
+ * @param options - `{ type, streamChunkBytes, withWorkspaces }`。
+ * @returns `{ ctx, cfg, fs }`。
  */
 function harness(options = {}) {
   const fs = createFakeFs({
@@ -29,7 +29,9 @@ function harness(options = {}) {
   const workspaces = options.withWorkspaces === false ? undefined : [{ path: 'C:\\ws', title: '工作区' }]
   const ctx = createFakeCtx(fs, workspaces)
   const cfg = resolveConfig(
-    options.maxChunkBytes === undefined ? undefined : { stream: { maxChunkBytes: options.maxChunkBytes } },
+    options.streamChunkBytes === undefined
+      ? undefined
+      : { stream: { streamChunkBytes: options.streamChunkBytes } },
   )
   return { ctx, cfg, fs }
 }
@@ -120,28 +122,49 @@ test('单区间 → 206 + Content-Range，字节切片精确', async () => {
   assert.deepEqual([...body], [2, 3, 4, 5])
 })
 
-test('`bytes=0-`（播放器的第一次请求）被裁到 maxChunkBytes，且 Content-Range 如实反映', async () => {
-  // 配置层对 maxChunkBytes 有 64 KiB 的下界（一个 5 字节的窗口是病态配置），
-  // 所以这里用一个大于该下界的文件来观察真实的裁剪行为。
+test('`bytes=0-`（播放器的第一次请求）必须给到文件末尾 —— 回归：曾被裁成"短 206"', async () => {
+  // 这是一次真实事故的回归测试。
+  //
+  // 旧实现为了"防止一次读进内存"，把客户端要的区间裁到 maxChunkBytes 再发，
+  // 于是 `Range: bytes=0-` 收到的是"只覆盖前 8 MiB 的短 206"。媒体栈把它当成
+  // **流已结束**，表现为：
+  //   · 623 MB / 34 Mbps 的 mp4 播约 1.95 秒就跳到结尾（8 MiB ÷ 34 Mbps ≈ 2 s）
+  //   · 36 MB / 2 Mbps 的压缩版能播但进度条拖不动
+  // 文件本身完全正常（moov 在前、mvhd 152 秒、45 个关键帧、无截断）。
+  //
+  // 正确行为：如实服务客户端要的整个区间，内存用流式窗口约束 —— 与所有媒体服务器一致。
   const chunk = 64 * 1024
-  const big = new Uint8Array(chunk + 100).map((_value, index) => index % 251)
+  const big = new Uint8Array(chunk * 3 + 100).map((_value, index) => index % 251)
   const fs = createFakeFs({ [VIDEO]: { bytes: big } })
   const ctx = createFakeCtx(fs, [{ path: 'C:\\ws' }])
-  const cfg = resolveConfig({ stream: { maxChunkBytes: chunk } })
+  const cfg = resolveConfig({ stream: { streamChunkBytes: chunk } })
 
   const response = await serveMedia(mediaRequest(VIDEO, 'bytes=0-'), ctx, cfg)
   assert.equal(response.status, 206)
-  // 请求的是"到末尾"，实际只给第一个窗口 —— HTTP 允许少给，播放器据此继续要下一段。
-  assert.equal(response.headers.get('content-range'), `bytes 0-${chunk - 1}/${big.length}`)
-  assert.equal(response.headers.get('content-length'), String(chunk))
+  // 关键断言：区间一直给到 size-1，而不是给一个窗口就完事。
+  assert.equal(response.headers.get('content-range'), `bytes 0-${big.length - 1}/${big.length}`)
+  assert.equal(response.headers.get('content-length'), String(big.length))
   const body = new Uint8Array(await response.arrayBuffer())
-  assert.equal(body.length, chunk)
-  assert.deepEqual([...body.slice(0, 8)], [...big.slice(0, 8)])
+  assert.equal(body.length, big.length, '响应必须是完整请求区间，短响应会被当成流结束')
+  assert.deepEqual([...body], [...big])
+  // 内存仍然是有界的：窗口 64 KiB，3 个多窗口的顺序读取。
+  assert.ok(fs.calls.readByteRange >= 4, `应当分窗口流式读取，实际 ${fs.calls.readByteRange} 次`)
+})
 
-  // 第二段接着要：偏移 chunk 起，只剩 100 字节。
-  const next = await serveMedia(mediaRequest(VIDEO, `bytes=${chunk}-`), ctx, cfg)
-  assert.equal(next.headers.get('content-range'), `bytes ${chunk}-${big.length - 1}/${big.length}`)
-  assert.equal((await next.arrayBuffer()).byteLength, 100)
+test('从中间到末尾的区间：同样完整给到末尾，Content-Range 精确', async () => {
+  const chunk = 64 * 1024
+  const big = new Uint8Array(chunk * 2 + 7).map((_value, index) => index % 251)
+  const fs = createFakeFs({ [VIDEO]: { bytes: big } })
+  const ctx = createFakeCtx(fs, [{ path: 'C:\\ws' }])
+  const cfg = resolveConfig({ stream: { streamChunkBytes: chunk } })
+
+  const start = chunk + 1
+  const response = await serveMedia(mediaRequest(VIDEO, `bytes=${start}-`), ctx, cfg)
+  assert.equal(response.status, 206)
+  assert.equal(response.headers.get('content-range'), `bytes ${start}-${big.length - 1}/${big.length}`)
+  assert.equal(response.headers.get('content-length'), String(big.length - start))
+  const body = new Uint8Array(await response.arrayBuffer())
+  assert.deepEqual([...body], [...big.slice(start)])
 })
 
 test('末尾附近：结束位置超出实体时按实际读到的字节写 Content-Range', async () => {

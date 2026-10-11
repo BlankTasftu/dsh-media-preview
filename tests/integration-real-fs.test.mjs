@@ -188,25 +188,35 @@ test('真实大文件：跨多个 206 分块与整文件流式读取都字节精
     await fsp.rm(TMP_DIR, { recursive: true, force: true })
   })
 
-  const window = 1024 * 1024
-  const localCfg = resolveConfig({ stream: { maxChunkBytes: window, streamChunkBytes: 256 * 1024 } })
+  const window = 256 * 1024
+  const localCfg = resolveConfig({ stream: { streamChunkBytes: window } })
 
-  // ① 播放器式的连续分块。
+  // ① 播放器式的请求：`bytes=0-` 必须一次给到文件末尾（回归测试，见 CHANGELOG 0.2.0），
+  //    内部按窗口流式读 —— 响应完整、内存有界。
   const parts = []
   let offset = 0
+  let requests = 0
   while (offset < payload.length) {
     const url = `http://127.0.0.1:19387/api/media?path=${encodeURIComponent(big)}`
     const response = await serveMedia(new Request(url, { headers: { range: `bytes=${offset}-` } }), ctx, localCfg)
     assert.equal(response.status, 206)
     assert.equal(response.headers.get('content-type'), 'video/mp4')
+    // 请求的是"到末尾"，响应就必须到末尾：短响应会被媒体栈当成流结束。
+    assert.equal(
+      response.headers.get('content-range'),
+      `bytes ${offset}-${payload.length - 1}/${payload.length}`,
+    )
     const body = Buffer.from(await response.arrayBuffer())
-    assert.ok(body.length <= window, '单次响应不得超过配置上限')
+    assert.ok(body.length > 0, '空响应会让播放器卡住')
     parts.push(body)
     offset += body.length
+    requests += 1
+    assert.ok(requests < 100, '分块循环没有前进')
   }
+  assert.equal(requests, 1, 'bytes=0- 应当一次给完，不需要客户端再要第二段')
   assert.equal(hashOf(Buffer.concat(parts)), hashOf(payload))
 
-  // ② 无 Range 的整文件：内部多窗口流式，结果仍须一致。
+  // ② 无 Range 的整文件：同样多窗口流式，结果仍须一致。
   const full = await serveMedia(
     new Request(`http://127.0.0.1:19387/api/media?path=${encodeURIComponent(big)}`),
     ctx,
@@ -214,6 +224,19 @@ test('真实大文件：跨多个 206 分块与整文件流式读取都字节精
   )
   assert.equal(full.status, 200)
   assert.equal(hashOf(Buffer.from(await full.arrayBuffer())), hashOf(payload))
+
+  // ③ 从中间要一段：Content-Range 精确，字节与文件切片一致（拖动进度条走的就是这条）。
+  const start = Math.floor(payload.length / 2)
+  const middle = await serveMedia(
+    new Request(`http://127.0.0.1:19387/api/media?path=${encodeURIComponent(big)}`, {
+      headers: { range: `bytes=${start}-` },
+    }),
+    ctx,
+    localCfg,
+  )
+  assert.equal(middle.status, 206)
+  assert.equal(middle.headers.get('content-range'), `bytes ${start}-${payload.length - 1}/${payload.length}`)
+  assert.equal(hashOf(Buffer.from(await middle.arrayBuffer())), hashOf(payload.subarray(start)))
 })
 
 test('真实目录：扫描到素材目录里的 mp3，大小与文件系统一致', async (t) => {

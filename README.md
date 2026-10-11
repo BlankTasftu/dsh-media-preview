@@ -136,9 +136,9 @@ ctx.fs.readByteRange(target, {offset, length})   ← 组合文件系统，访问
 1. **用鉴权 fetch 通道（`ctx.connection.fetch`），不用裸 `webServer` 路由。**
    这条通道已经替插件做了主机栅栏、`Origin`/`sec-fetch-site` 校验和签名 cookie 验证；自己做等于重写一套安全模型，还会和内建 `/api/file` 分叉。桌面端 `dsh-app://app/**` 是**通配转发**到本机服务的（只白名单了 `/`、`/assets/*` 等少数路径），所以渲染进程里 `new URL('api/media?…', document.baseURI)` 直接可达，shell 会注入 cookie。
 
-2. **自己实现 Range。**
+2. **自己实现 Range，并且如实服务整个区间。**
    内建 `/api/file` 是 `readBytes` 整个文件后 200 返回，并且在 `maxImageBytes`（默认 20 MiB）处直接 413 —— 既播不了大文件，也没有 `Content-Range`，进度条拖不动。所以本插件自己解析 `Range`、回 206/416。
-   其中一条容易踩的：播放器第一次常发 `Range: bytes=0-`（字面意思是"到文件末尾"）。真按字面读，一部 2 GB 的片子就一次性进内存。HTTP 允许**合法地少给** —— 裁到 `maxChunkBytes` 并在 `Content-Range` 里如实写出实际范围，播放器接着要下一段。这是所有分块媒体服务器的做法。
+   其中一条**踩过坑的**：播放器第一次常发 `Range: bytes=0-`（字面意思是"到文件末尾"）。早先的版本为了"防止一次读进内存"，把区间裁到 8 MiB 再发、并在 `Content-Range` 里如实写出实际范围——**这个思路是错的**：播放器会把"短 206"当成**流已结束**。实测在一部 623 MB / 34 Mbps 的片子上表现为"播约 2 秒就跳到结尾"（8 MiB ÷ 34 Mbps ≈ 1.95 秒），在一部 36 MB / 2 Mbps 的压缩版上表现为"能播但进度条拖不动"。正确做法与所有媒体服务器一致：**要多少区间就给多少，但用流式发送**——内存由读取窗口（`streamChunkBytes`）约束，而不是由裁区间约束。
 
 3. **预览用 `loading: 'renderer'` 模式。**
    这是文档预览里唯一"owner 不替你读字节"的模式，正好适合媒体：把流地址交给 `<video>`，字节永远不经过 JS。
@@ -149,7 +149,7 @@ ctx.fs.readByteRange(target, {offset, length})   ← 组合文件系统，访问
 
 | 字段 | 默认 | 含义 |
 |---|---|---|
-| `stream.maxChunkBytes` | `8388608`（8 MiB） | 单次 206 最多发多少字节（64 KiB ~ 64 MiB） |
+| `stream.streamChunkBytes` | `1048576`（1 MiB） | 流式发送时的读取窗口，即**内存上限**（64 KiB ~ 16 MiB）。它只决定"每次从磁盘读多少"，不决定响应发多少 —— 客户端要多少区间就给多少 |
 | `stream.streamChunkBytes` | `1048576`（1 MiB） | 无 Range 的整文件响应的内部读取窗口（内存上限，非响应上限） |
 | `library.maxFiles` | `400` | 媒体库一次最多列出多少文件（1 ~ 5000） |
 | `library.maxDepth` | `6` | 扫描递归深度（0 ~ 32） |
@@ -176,7 +176,7 @@ ctx.fs.readByteRange(target, {offset, length})   ← 组合文件系统，访问
 | 有播放器但一按播放就报「浏览器无法播放这个文件」 | 诊断卡会说明是哪一层失败。若是 mp4/mov 报 `DEMUXER_ERROR_COULD_NOT_OPEN`，多半是索引在末尾 —— 点「完整缓冲后重试」，或看它是否已自动开始缓冲。 |
 | 卡在「正在完整缓冲…」很久 | 这个文件只能整份取下来才能播（索引在末尾）。可以取消，然后下载到本地用系统播放器看。 |
 | 进度条拖不动 | 说明响应没有 `Content-Range`。本插件的路由是有 206 的；若你正经过反向代理或自定义 `webServer` 路由访问，代理可能吞掉了 Range 头。完整缓冲模式不受此影响。 |
-| 视频能播但很卡 | 试着调大 `stream.maxChunkBytes`（例如 16 MiB）：单次响应越大，请求次数越少。 |
+| 视频播两秒就跳到结尾 / 进度条拖不动 | 0.1.x 的已知缺陷（响应被裁成"短 206"，播放器当成流结束），0.2.0 已修。若仍复现，说明宿主半侧还是旧代码 —— 重启 DSH 让插件重新加载。 |
 | 媒体库面板是空的 | 面板列的是**已注册工作区**下的媒体（没有注册工作区时回落到进程 cwd）。文件在别的目录时，用右侧 Files 树直接点开。 |
 | 媒体库列表被截断 | 达到 `library.maxFiles` / `maxVisited` / `maxDepth` 上限，面板底部会写明。调大对应配置即可。 |
 

@@ -78,10 +78,10 @@ test('配置：非法值回落到默认值，合法值被采纳', () => {
   assert.deepEqual(defaults, DEFAULT_CONFIG)
 
   const custom = resolveConfig({
-    stream: { maxChunkBytes: 1024 * 1024, streamChunkBytes: 128 * 1024 },
+    stream: { streamChunkBytes: 128 * 1024 },
     library: { maxFiles: 12, maxDepth: 2, skipDirectories: ['Node_Modules', '.git'] },
   })
-  assert.equal(custom.stream.maxChunkBytes, 1024 * 1024)
+  assert.equal(custom.stream.streamChunkBytes, 128 * 1024)
   assert.equal(custom.library.maxFiles, 12)
   assert.equal(custom.library.maxDepth, 2)
   assert.deepEqual(custom.library.skipDirectories, ['node_modules', '.git'])
@@ -89,10 +89,9 @@ test('配置：非法值回落到默认值，合法值被采纳', () => {
 
 test('配置：越界与错误类型都不会把插件变成内存炸弹', () => {
   const insane = resolveConfig({
-    stream: { maxChunkBytes: 1e12, streamChunkBytes: -5 },
+    stream: { streamChunkBytes: -5 },
     library: { maxFiles: 0, maxDepth: 999, maxVisited: 'abc', maxEntriesPerDir: null },
   })
-  assert.equal(insane.stream.maxChunkBytes, DEFAULT_CONFIG.stream.maxChunkBytes)
   assert.equal(insane.stream.streamChunkBytes, DEFAULT_CONFIG.stream.streamChunkBytes)
   assert.equal(insane.library.maxFiles, DEFAULT_CONFIG.library.maxFiles)
   assert.equal(insane.library.maxDepth, DEFAULT_CONFIG.library.maxDepth)

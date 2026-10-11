@@ -96,23 +96,25 @@ test('注册出去的 handler 真的能服务：Range 请求拿到 206', async (
   assert.equal(head.headers.get('content-length'), '8')
 })
 
-test('profile 补丁里的配置生效（maxChunkBytes 决定单次响应上限）', async () => {
-  // 取配置下界 64 KiB，文件 100 KiB → 第一次 `bytes=0-` 必须只给 64 KiB。
+test('profile 补丁里的配置生效（streamChunkBytes 只影响读取窗口，不裁响应）', async () => {
+  // 窗口取配置下界 64 KiB，文件 100 KiB：响应必须是**整个请求区间**（100 KiB），
+  // 但内部按 64 KiB 窗口分两次读 —— 内存有界，而响应完整。
   const size = 100 * 1024
   const bytes = new Uint8Array(size).map((_value, index) => index % 253)
   const { root, routes } = createHostRoot({ fs: createFakeFs({ 'C:\\ws\\big.mp4': { bytes } }) })
-  plugin.apply(root, { stream: { maxChunkBytes: 65536 } })
+  plugin.apply(root, { stream: { streamChunkBytes: 65536 } })
 
   const stream = routes.find((route) => route.path === '/api/media')
   const url = `http://127.0.0.1:19387/api/media?path=${encodeURIComponent('C:\\ws\\big.mp4')}`
   const response = await stream.fetch(new Request(url, { headers: { range: 'bytes=0-' } }))
   assert.equal(response.status, 206)
-  assert.equal(response.headers.get('content-range'), `bytes 0-65535/${size}`)
-  assert.equal((await response.arrayBuffer()).byteLength, 65536)
+  assert.equal(response.headers.get('content-range'), `bytes 0-${size - 1}/${size}`)
+  assert.equal(response.headers.get('content-length'), String(size))
+  assert.equal((await response.arrayBuffer()).byteLength, size)
 })
 
 test('非法配置只回落默认值，不让路由注册失败', () => {
   const { root, routes } = createHostRoot()
-  plugin.apply(root, { stream: { maxChunkBytes: 1e15, streamChunkBytes: 'x' }, library: { maxFiles: -3 } })
+  plugin.apply(root, { stream: { streamChunkBytes: 'x', 未知字段: 1 }, library: { maxFiles: -3 } })
   assert.equal(routes.length, 2)
 })
