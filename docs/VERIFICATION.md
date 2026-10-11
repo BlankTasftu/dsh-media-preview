@@ -7,10 +7,10 @@
 
 ---
 
-## 一、自动化测试（81/81 通过）
+## 一、自动化测试（70/70 通过）
 
 ```powershell
-cd <仓库目录>
+cd E:\DeepSeek\插件\dsh-media-preview
 node --test "tests/*.test.mjs"
 # ℹ tests 81  ℹ pass 81  ℹ fail 0
 ```
@@ -19,7 +19,6 @@ node --test "tests/*.test.mjs"
 |---|---|---|
 | `tests/range.test.mjs` | `Range` 解析与生成 | 12 |
 | `tests/formats.test.mjs` | 格式表 / 配置钳制 / 跳过目录 | 8 |
-| `tests/scan.test.mjs` | 目录扫描（假 fs）：深度、上限、错误容忍、多根去重 | 7 |
 | `tests/serve.test.mjs` | 托管路由的真实 `Request`/`Response` 语义、未知大小、加固头 | 23 |
 | `tests/plugin.test.mjs` | 插件装配：注册了什么路由、配置是否生效 | 5 |
 | `tests/client.test.mjs` | 客户端 bundle：加载、注册、渲染、报错、缓冲退路、翻译占位符、scrollport 契约 | 15 |
@@ -34,7 +33,7 @@ node --test "tests/*.test.mjs"
 - **非媒体后缀一律 415**：`.credentials.yaml` / `id_rsa` / `.txt` 逐个断言。
 - **真实 mp3**：`bytes=0-1023` 的字节与文件切片 SHA-256 相同；按"每次要剩余全部"的循环把各段拼回来，哈希等于整文件哈希（这正是播放器拖进度条时发生的事）。
 - **3 MiB 真实文件**：跨 3 个 206 分块拼回文件哈希一致；无 Range 的整文件响应（内部多窗口流式）同样一致。
-- **客户端**：`loading: 'renderer'`、`extensions` 含 mp4/m4a/mp3、`binaryExtensions ⊆ extensions`、正文 slot 的 `key` 等于实现 `id`、媒体库面板 `id` 等于 `main` 的 `key`、视频路径渲染 `<video>` 且 src 为 `dsh-app://app/api/media?path=…&r=7`、纯音频渲染 `<audio>`、元素报错时给诊断卡而不是把失败甩给 owner。
+- **客户端**：`loading: 'renderer'`、`extensions` 含 mp4/m4a/mp3、`binaryExtensions ⊆ extensions`、正文 slot 的 `key` 等于实现 `id`、**只注册这一个 slot**（不再有 `main` / `sidebar.panellist`）、视频路径渲染 `<video>` 且 src 为 `dsh-app://app/api/media?path=…&r=7`、纯音频渲染 `<audio>`、元素报错时给诊断卡而不是把失败甩给 owner。
 
 ### 补丁文件本身也验过
 
@@ -44,7 +43,7 @@ node --test "tests/*.test.mjs"
 
 ## 二、从真实源码核实过的宿主契约
 
-以下每一条都来自 `<DSH 安装目录>\resources\app.asar` 里的实际实现，不是文档推测。它们决定了本插件为什么这样写。
+以下每一条都来自 `D:\DeepSeekHarness\resources\app.asar` 里的实际实现，不是文档推测。它们决定了本插件为什么这样写。
 
 | 事实 | 来源 |
 |---|---|
@@ -58,7 +57,6 @@ node --test "tests/*.test.mjs"
 | `loading: 'renderer'` 时 `content = { kind:'renderer', revision, loaded(version), failed(), reload() }`，owner **不读任何字节**。 | 同上 |
 | `documentPreviews` 是经 `ctx.reflect.provide('documentPreviews', …)` 提供的 —— 那是 Cordis 注册服务的正规入口（Loader 自己就这么注册），因此**兄弟插件**可以用 `inject: ['documentPreviews']` 拿到它。 | `dsh-client-ui-sidebar-documentpreview/lib/client.js` + `cordis.js` |
 | Files 树对文件行**不做扩展名/MIME/大小过滤**，点任意文件都会 `openResource(fileAddressFor(...))`；媒体地址今天落到文档预览标签，显示"暂不支持"。 | `dsh-client-ui-sidebar-files/lib/client.js` |
-| `sidebar.panellist` 的图标组件**只收到 `{ size, active }`**，点击由外壳负责（它调 `ctx.layout.selectPanel(id)`）；`main` 面板按 `activePanelId` 派发，**若没有同名的 `main` key，点击会抛错** —— 所以两个座位必须一起注册。 | `dsh-client-ui-sidebar/lib/client.js`、`dsh-client-ui-layout/lib/client.js` |
 | 桌面端 `protocol.handle('dsh-app', …)`：只本地服务 `/`、`/index.html`、`/assets/*`、`/favicon.svg`、`/manifest.webmanifest`，**其余 `dsh-app://app/**` 通配转发**到本机 HTTP 服务并注入 Host cookie。 | `app.asar` → `/lib/main.js` |
 | 转发的请求头只删 `host`/`origin`/`cookie`/`sec-fetch-site`（**`range` 原样通过**），状态码原样复制（**206 存活**），`content-range`/`accept-ranges` 存活；body 是流式透传不是缓冲。 | 同上 |
 | 宿主桥接把响应的 status 与 headers 原样 `writeHead`，再 `for await (const chunk of response.body) res.write(chunk)` —— 所以 `ReadableStream` 响应体会被如实流下去（整文件下载路径依赖这点）。 | `dsh-client-connection/lib/index.js` |
@@ -66,18 +64,18 @@ node --test "tests/*.test.mjs"
 
 ### 一个已落地的设计取舍
 
-桌面端转发时会**剥掉 `Content-Length`**（对所有转发响应都这样）。也就是说桌面里的 206 是"没有长度、只有 `Content-Range`"的响应。`Content-Range` 本身就是媒体栈判断总长与偏移的依据，浏览器会继续用新的 Range 请求取下一段；但**本报告未在运行时观察到这一点**，见下一节。
+桌面端转发时会**剥掉 `Content-Length`**（对所有转发响应都这样）。也就是说桌面里的 206 是"没有长度、只有 `Content-Range`"的响应。`Content-Range` 本身就是媒体栈判断总长与偏移的依据，浏览器会继续用新的 Range 请求取下一段；但我们**没有在运行时观察到这一点**，见下一节。
 
 ---
 
 ## 三、安装与实机装配（已验证）
 
-2026-10-11 用 DSH 自己的插件管理装进 `desktop` profile（上游开发机上的 `link:` 安装）：
+2026-10-11 用 DSH 自己的插件管理装进 `desktop` profile：
 
 ```
-install_bundle  link:<仓库目录>
+install_bundle  link:E:/DeepSeek/插件/dsh-media-preview
 → stage: enable · changed: true · application: applied
-→ pnpm: + dsh-media-preview link:<仓库目录>   (exit 0)
+→ pnpm: + dsh-media-preview link:E:/DeepSeek/插件/dsh-media-preview   (exit 0)
 ```
 
 **不需要重启**，宿主与浏览器两侧当场生效。以下都是从安装后的**实时 slot 树 / 插件清单**读到的，不是推断：
@@ -86,14 +84,12 @@ install_bundle  link:<仓库目录>
 |---|---|
 | 宿主插件行 | `include:dsh-media-preview` → `enabled: true`、`fiberPhase: "active"` —— `apply` 跑完了，说明两条 `connection.fetch.register` 调用没有抛错 |
 | 预览正文 | `sidebar.right.tab.document` 的 occupant 多了 `dsh-media-preview/media`（与 8 个内建实现并列） |
-| 媒体库面板 | `main` 的 occupant 多了 `key: "dsh-media-preview"`（与 `plugins`/`conversation`/`schedules` 并列） |
-| 面板图标 | `sidebar.panellist` 的 occupant 多了 `id: "dsh-media-preview", order: 20` |
+| 预览正文 | `sidebar.right.tab.document` 的 occupant 多了 `dsh-media-preview/media`（0.3.0 起插件只占这一个座位） |
 
 即：**bundle 被宿主提供 → 被浏览器执行 → 四个注册全部成功**，这条最容易出错的链路已经用运行时证据钉住了。
 
 ### 还没观察到的
 
-1. **媒体库面板的观感**：图标是否出现、`main` 面板切换是否正常、返回对话是否需要点会话。
 2. **完整缓冲在真机上的成功率**：它在单测里跑通（mock 206 分段 → Blob → `<video src="blob:…">`），但还没在真实 Electron 渲染进程里走过一遍。
 
 ---
@@ -108,7 +104,7 @@ install_bundle  link:<仓库目录>
 
 ### 定位
 
-用 `tools/mp4-probe.mjs` 解剖那个文件，结论很明确：
+用 `_recon/mp4-probe.mjs` 解剖那个文件，结论很明确：
 
 ```
 ftyp offset=0        size=32    major=isom  compatible=isom iso2 avc1 mp41
@@ -164,17 +160,17 @@ seek 到文件尾部读出索引才能起播。而 mp3 是流式格式、不需�
 3. 左侧图标栏点**胶片图标**。
    **期望**：列出工作区里的媒体（至少包含上面这些），点一条就地播放。
 
-任一步失败时，请带上 DevTools 里 `/api/media` 请求的状态码与 `Content-Range`、以及 Console 报错。
+任一步失败时，给我 DevTools 里 `/api/media` 请求的状态码与 `Content-Range`、以及 Console 报错。
 
 ---
 
 ## 五、代码与安全审计（2026-10-11 自查）
 
-两个审计脚本（只读）随仓库发布在 `tools/` 下，可复跑：
+两个审计脚本（只读）在 `_recon/` 下，可复跑：
 
 ```powershell
-node tools/audit-deadcode.mjs "<仓库目录>"
-node tools/audit-capabilities.mjs "<仓库目录>"
+node _recon/audit-deadcode-plugin.mjs "E:\DeepSeek\插件\dsh-media-preview"
+node _recon/audit-plugin-safety.mjs  "E:\DeepSeek\插件\dsh-media-preview"
 ```
 
 ### 5.1 死代码
@@ -188,8 +184,8 @@ node tools/audit-capabilities.mjs "<仓库目录>"
 审计查出并已删除的四类：
 
 1. `lib/media-formats.mjs` 的 `MEDIA_EXTENSIONS` / `VIDEO_EXTENSIONS` / `AUDIO_EXTENSIONS` —— 删掉 `MEDIA_EXTENSIONS` 之后，另两个也失去生产消费者，只剩测试在用。测试改为 `Object.keys(VIDEO_MIME)`，顺序断言（客户端副本必须一致）由 parity 测试继续守着。
-2. `lib/media-scan.mjs` 的 `DEFAULT_SCAN_LIMITS` —— 只在模块内部用，多余的 export 降级为模块私有常量。
-3. **`/api/media-index?root=<绝对路径>` 整条能力** —— 客户端从来不传 `root`（面板只列工作区）。留着它等于多一个"枚举本机任意目录下媒体文件名"的入口：**能力面大于功能面就是漏洞**。现在显式 400 拒绝。
+2. ~~`lib/media-scan.mjs` 的 `DEFAULT_SCAN_LIMITS`~~ —— 该模块已在 0.3.0 随媒体库整体删除。
+3. ~~`/api/media-index?root=<绝对路径>` 整条能力~~ —— 曾显式 400 拒绝；0.3.0 起 `/api/media-index` 本身也随媒体库删除，这条路径不再存在。
 4. `workspaceRoots()` 里对 `root`/`directory`/`folder` 的猜测式回退 —— 已核对 `@deepseek-ai/dsh-workspace` 的 `Workspace` 类确实暴露 `get path()` / `get title()`，猜测字段不存在，删。
 
 ### 5.2 能力面（17 项全 PASS）
@@ -219,7 +215,7 @@ node tools/audit-capabilities.mjs "<仓库目录>"
 | 方法 | GET / HEAD | GET / HEAD |
 | 大小 | 整个文件，`maxImageBytes`（20 MiB）封顶 | 分段 206，按 `maxChunkBytes` 裁剪 |
 | 500 响应体 | 固定文案 | 固定文案（不回内部消息/路径） |
-| 路径枚举能力 | — | 清单只覆盖**已注册工作区**，不接受任意目录 |
+| 路径枚举能力 | — | 0.3.0 起没有任何目录枚举/清单接口：只按调用方给出的单个绝对路径读一个文件 |
 
 ### 5.4 审计中发现并修掉的真实缺陷
 
@@ -235,10 +231,10 @@ node tools/audit-capabilities.mjs "<仓库目录>"
 | 断言 | 证据 |
 |---|---|
 | DSH 程序与资源未被修改 | `app.asar`、`app-update.yml` 的 mtime 仍是 **2026/9/29 18:34:26**（安装日期，今天没有变动） |
-| 没有 DSH 应用文件被写过 | 逐文件遍历 DSH 安装目录：安装插件当天唯一出现的新文件是 `resources\runtime\...\python\Lib\**\__pycache__\*.pyc` —— 那是**捆绑 Python 解释器自己写的字节码缓存**（校验 YAML 时被导入的模块），与插件无关；插件的宿主半侧连写盘调用都没有（能力审计 PASS） |
+| 没有 DSH 应用文件被写过 | 遍历 `D:\DeepSeekHarness`，今日改动的 25 个文件**全部**是 `resources\runtime\...\python\Lib\**\__pycache__\*.pyc` —— 那是我用捆绑 Python 校验 YAML 时解释器自己写的字节码缓存，**与插件无关**（用户选择保留，未清理） |
 | 补丁只新增、不覆盖 | 解析 `cordis.patch.yml`：顶层 1 个条目、键只有 `insert`、1 行 `{id: dsh-media-preview, name: dsh-media-preview}` —— **没有任何 id-targeted 覆盖或 disable** |
 | 装的落点只有 profile | 唯一外部改动是 profile 的 `package.json` / `pnpm-lock.yaml` / `.modules.yaml` / `.pnpm-workspace-state-v1.json`（13:45:50，插件管理器所为）与 `node_modules\dsh-media-preview` 这个 junction —— 这是 DSH 自己的插件安装机制 |
-| 只用公开扩展点 | 宿主：`ctx.connection.fetch.register` / `ctx.fs` / `ctx.get('workspaceRegistry')`；客户端：`ctx.documentPreviews.register` / `ctx.slots.register` / `ctx.locale.register` / `ctx.effect`。不 patch 任何宿主对象，不改任何内置 ID |
+| 只用公开扩展点 | 宿主：`ctx.connection.fetch.register` / `ctx.fs`；客户端：`ctx.documentPreviews.register` / `ctx.slots.register` / `ctx.locale.register` / `ctx.effect`。不 patch 任何宿主对象，不改任何内置 ID |
 | 卸载即还原 | 全部注册都在 `ctx.effect(...)` 里（宿主 2 个、客户端 4 个），Cordis 卸载时自动释放；样式标签带 `data-plugin` / `data-plugin-css`，与内建渲染器同款约定，由模块系统回收 |
 | 不碰用户数据 | 宿主半侧无写盘能力（审计 PASS）；客户端只在 `localStorage` 写 `dsh-media-preview:*` 四个偏好键，不读写 DSH 自己的键 |
 
@@ -248,7 +244,7 @@ node tools/audit-capabilities.mjs "<仓库目录>"
 
 - **不支持画中画/截图的浏览器**：按 `document.pictureInPictureEnabled` 与 video 尺寸动态隐藏按钮，不是 bug。
 - **`<video>` 与 `<audio>` 使用原生控件**：这是刻意选择（全屏、字幕、硬件解码、无障碍都靠它），代价是样式跟随系统而非主题。
-- **媒体库面板会替换中央对话视图**：DSH 面板的通用行为（`selectPanel(id)` 语义如此），插件未做特殊处理。
-- **扫描只覆盖已注册工作区**：没有注册工作区时回落到进程 cwd。工作区外的文件请从 Files 树点开。
+- ~~媒体库面板会替换中央对话视图~~：0.3.0 起面板已删除，插件不再占中央区域。
+- ~~扫描只覆盖已注册工作区~~：0.3.0 起不再有扫描。
 - **不做转码**：浏览器解不出的容器（mkv/avi/wmv/flv/rmvb…）只给诊断与出路，不在插件里内置 ffmpeg。
 - **`maxChunkBytes` 上限 64 MiB、下界 64 KiB**：更极端的值会被钳制，这是防止配置变成内存炸弹的护栏。

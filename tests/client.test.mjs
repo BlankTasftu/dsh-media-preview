@@ -9,10 +9,11 @@
  *
  * 覆盖的正是最贵的几个失误：
  *   · 扩展名列表没带上 mp4/m4a/mp3（用户的核心诉求）
+ *   · 扩展名列表**多了**代码后缀（`.ts` 曾把 TypeScript 抢成视频）
  *   · `loading` 忘了写 `renderer`（会退化成 owner 先读完整文件）
  *   · slot key 与实现 id 不一致（正文永远不渲染）
- *   · 面板 id 与 `main` key 不一致（点图标会抛错）
  *   · 视频/音频选错标签、流地址没带 path
+ *   · 拖动失效时没有退路（转完整缓冲）
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -328,7 +329,7 @@ test('bundle 注册 id / 导出 apply+inject，且只 require 基座里的 react
   }
 })
 
-test('apply() 注册：预览实现 / 预览正文 / 媒体库面板 / 面板图标', () => {
+test('apply() 只注册两处：预览实现 + 预览正文（0.3.0 起不再有媒体库面板）', () => {
   const bundle = loadBundle()
   try {
     const { ctx, log } = createClientCtx()
@@ -350,17 +351,16 @@ test('apply() 注册：预览实现 / 预览正文 / 媒体库面板 / 面板图
     }
     assert.equal(typeof definition.title, 'function')
 
-    // ② 三个 slot：正文 key 必须等于实现 id；面板 id 必须同时是 main 的 key 与 icon 的 id。
+    // ② 只占一个 slot：正文 key 必须等于实现 id。
     const byName = new Map(log.slots.map((entry) => [entry.options.name, entry.options]))
-    assert.deepEqual([...byName.keys()].sort(), [
-      'main',
-      'sidebar.panellist',
-      'sidebar.right.tab.document',
-    ])
+    assert.deepEqual([...byName.keys()], ['sidebar.right.tab.document'])
     assert.equal(byName.get('sidebar.right.tab.document').key, definition.id)
-    const panelId = byName.get('main').key
-    assert.equal(byName.get('sidebar.panellist').id, panelId)
-    assert.equal(panelId, 'dsh-media-preview')
+
+    // ③ 明确不再占任何面板座位：媒体库已删除，不该留下 main / sidebar.panellist。
+    for (const slot of ['main', 'sidebar.panellist', 'sidebar.footer.action']) {
+      assert.equal(byName.has(slot), false, `不该再注册 ${slot}`)
+    }
+
     for (const entry of log.slots) {
       assert.equal(entry.options.locale, 'dshMediaPreview')
       assert.equal(typeof entry.component, 'function')
@@ -496,51 +496,6 @@ test('正文：元素报错时给出诊断卡，并且不把失败甩给 owner',
     // 诊断卡里有 mkv 的容器提示与"下载/复制路径/重试"出路。
     assert.ok(findAll(tree, (node) => node.type === 'button').length >= 2)
     assert.deepEqual(failed, [])
-  } finally {
-    bundle.restore()
-  }
-})
-
-test('媒体库面板：拉到清单后列出文件并可选中播放', async () => {
-  const bundle = loadBundle()
-  try {
-    const { ctx, log } = createClientCtx()
-    bundle.exports.apply(ctx)
-    const Panel = log.slots.find((entry) => entry.options.name === 'main').component
-
-    const payload = {
-      roots: [{ label: 'ws', root: 'C:\\ws', files: 2 }],
-      files: [
-        { absolutePath: 'C:\\ws\\clip.mp4', name: 'clip.mp4', extension: 'mp4', kind: 'video', bytes: 2048 },
-        { absolutePath: 'C:\\ws\\song.mp3', name: 'song.mp3', extension: 'mp3', kind: 'audio', bytes: 900 },
-      ],
-      truncated: false,
-      errors: [],
-      streamRoute: '/api/media',
-    }
-    const requested = []
-    globalThis.fetch = async (url) => {
-      requested.push(url)
-      return { ok: true, status: 200, json: async () => payload }
-    }
-
-    const props = { t: (key) => key }
-    renderComponent(Panel, props, bundle.react)
-    // 等 fetch 的 promise 链落地。
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    const { tree } = renderComponent(Panel, props, bundle.react)
-
-    assert.equal(requested.length, 1)
-    assert.match(requested[0], /^dsh-app:\/\/app\/api\/media-index/)
-    const items = findAll(tree, (node) => node.props && node.props.className === 'dshmp-item')
-    assert.equal(items.length, 2)
-
-    // 点第一条 → 同一个元素树重渲染后应当出现 video 播放器。
-    items[0].props.onClick()
-    const afterSelect = renderComponent(Panel, props, bundle.react)
-    const videos = findAll(afterSelect.tree, (node) => node.type === 'video')
-    assert.equal(videos.length, 1)
-    assert.match(videos[0].props.src, /clip\.mp4/)
   } finally {
     bundle.restore()
   }
@@ -899,16 +854,6 @@ test('所有渲染路径都不留下未填充的翻译占位符（{n} 之类）'
     await settle()
     const afterFail = renderComponent(MediaBody, failedProps, bundle.react)
     assertNoPlaceholder(afterFail.tree, '缓冲失败后的诊断卡')
-
-    // ⑤ 媒体库面板
-    globalThis.fetch = async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({ files: [], roots: [], truncated: false, errors: [] }),
-    })
-    const Panel = log.slots.find((entry) => entry.options.name === 'main').component
-    const panel = renderComponent(Panel, { t: t }, bundle.react)
-    assertNoPlaceholder(panel.tree, '媒体库面板')
   } finally {
     bundle.restore()
   }

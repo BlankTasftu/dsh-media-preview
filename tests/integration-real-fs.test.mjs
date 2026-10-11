@@ -18,7 +18,6 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { serveMedia } from '../lib/index.js'
 import { resolveConfig } from '../lib/config.mjs'
-import { scanMediaRoot } from '../lib/media-scan.mjs'
 
 const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url))
 /**
@@ -237,24 +236,4 @@ test('真实大文件：跨多个 206 分块与整文件流式读取都字节精
   assert.equal(middle.status, 206)
   assert.equal(middle.headers.get('content-range'), `bytes ${start}-${payload.length - 1}/${payload.length}`)
   assert.equal(hashOf(Buffer.from(await middle.arrayBuffer())), hashOf(payload.subarray(start)))
-})
-
-test('真实目录：扫描到素材目录里的 mp3，大小与文件系统一致', async (t) => {
-  if (!existsSync(SAMPLE_DIR)) {
-    t.skip('没有素材目录')
-    return
-  }
-  const result = await scanMediaRoot({
-    fs: ctx.fs,
-    root: SAMPLE_DIR,
-    limits: { ...resolveConfig(undefined).library },
-  })
-  const mp3 = result.files.filter((file) => file.extension === 'mp3')
-  assert.ok(mp3.length > 0, '应当扫到 mp3')
-  for (const file of mp3) {
-    assert.equal(file.kind, 'audio')
-    assert.equal(file.bytes, readFileSync(file.absolutePath).length)
-    assert.equal(file.name.includes('\\'), false)
-  }
-  assert.deepEqual(result.errors, [])
 })

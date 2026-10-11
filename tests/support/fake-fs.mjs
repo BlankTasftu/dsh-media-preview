@@ -91,19 +91,17 @@ export function createFakeFs(entries) {
 }
 
 /**
- * 造一个带 workspaceRegistry 的假 ctx。
+ * 造一个假 ctx。
+ *
+ * 只有一个 `fs`：0.3.0 删掉媒体库后，插件不再读 `workspaceRegistry`。
  *
  * @param fs - 假文件系统。
- * @param workspaces - `workspaceRegistry.list()` 的返回值。
  * @returns 假 ctx。
  */
-export function createFakeCtx(fs, workspaces) {
+export function createFakeCtx(fs) {
   return {
     fs,
-    get(name) {
-      if (name === 'workspaceRegistry' && workspaces !== undefined) {
-        return { list: () => workspaces }
-      }
+    get() {
       return undefined
     },
   }

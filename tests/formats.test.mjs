@@ -16,7 +16,7 @@ import {
 /** 后缀顺序由 MIME 表的键序决定（客户端副本必须一致，见 parity 测试）。 */
 const VIDEO_EXTENSIONS = Object.keys(VIDEO_MIME)
 const AUDIO_EXTENSIONS = Object.keys(AUDIO_MIME)
-import { DEFAULT_CONFIG, resolveConfig, shouldSkipDirectory } from '../lib/config.mjs'
+import { DEFAULT_CONFIG, resolveConfig } from '../lib/config.mjs'
 
 test('扩展名提取：只看最后一段、大小写归一、无扩展名返回空串', () => {
   assert.equal(extensionOf('C:\\a\\b\\Song.MP3'), 'mp3')
@@ -67,6 +67,30 @@ test('每个后缀都有精确的 Content-Type，且类别与 MIME 前缀一致'
   assert.equal(mediaMimeOf('x.zzz'), 'application/octet-stream')
 })
 
+test('绝不认领代码/文档后缀（`.ts` 曾经把 TypeScript 当成视频）', () => {
+  // 真实事故：`ts`（MPEG 传输流）被放进媒体表之后，
+  //   · 媒体库把 20+ 个 `.d.ts` 列成了"视频"；
+  //   · 更糟的是预览 —— 本插件的注册优先级高于内建渲染器与纯文本兜底，
+  //     于是点开 `.ts` 源码会进"媒体播放器"，而不再按代码显示。
+  // 这里把"不能认领的后缀"钉死，避免以后再撞上同类歧义。
+  const FORBIDDEN = [
+    'ts', 'mts', 'tsx', 'cts', 'js', 'mjs', 'cjs', 'jsx',
+    'py', 'rb', 'go', 'rs', 'java', 'c', 'h', 'cpp', 'cs', 'php', 'lua', 'sh', 'ps1',
+    'json', 'yml', 'yaml', 'toml', 'ini', 'md', 'txt', 'log', 'html', 'htm', 'css', 'scss',
+  ]
+  for (const extension of FORBIDDEN) {
+    assert.equal(isMediaPath(`x.${extension}`), false, `${extension} 不该被当媒体`)
+    assert.equal(mediaKindOf(`x.${extension}`), null, `${extension} 不该有媒体类别`)
+    assert.equal(mediaMimeOf(`x.${extension}`), 'application/octet-stream', `${extension} 不该有媒体 MIME`)
+  }
+  // 报障时的具体形态
+  for (const path of ['index.d.ts', 'mod.mts', 'a.ts', 'src/types/config.d.ts']) {
+    assert.equal(isMediaPath(path), false, path)
+  }
+  // 无歧义的那个要保留
+  assert.equal(mediaKindOf('movie.m2ts'), 'video')
+})
+
 test('格式表没有重复键（音频/视频后缀不允许交叉）', () => {
   const overlap = VIDEO_EXTENSIONS.filter((extension) => AUDIO_EXTENSIONS.includes(extension))
   assert.deepEqual(overlap, [])
@@ -77,37 +101,18 @@ test('配置：非法值回落到默认值，合法值被采纳', () => {
   const defaults = resolveConfig(undefined)
   assert.deepEqual(defaults, DEFAULT_CONFIG)
 
-  const custom = resolveConfig({
-    stream: { streamChunkBytes: 128 * 1024 },
-    library: { maxFiles: 12, maxDepth: 2, skipDirectories: ['Node_Modules', '.git'] },
-  })
+  const custom = resolveConfig({ stream: { streamChunkBytes: 128 * 1024 } })
   assert.equal(custom.stream.streamChunkBytes, 128 * 1024)
-  assert.equal(custom.library.maxFiles, 12)
-  assert.equal(custom.library.maxDepth, 2)
-  assert.deepEqual(custom.library.skipDirectories, ['node_modules', '.git'])
 })
 
 test('配置：越界与错误类型都不会把插件变成内存炸弹', () => {
-  const insane = resolveConfig({
-    stream: { streamChunkBytes: -5 },
-    library: { maxFiles: 0, maxDepth: 999, maxVisited: 'abc', maxEntriesPerDir: null },
-  })
+  const insane = resolveConfig({ stream: { streamChunkBytes: -5 } })
   assert.equal(insane.stream.streamChunkBytes, DEFAULT_CONFIG.stream.streamChunkBytes)
-  assert.equal(insane.library.maxFiles, DEFAULT_CONFIG.library.maxFiles)
-  assert.equal(insane.library.maxDepth, DEFAULT_CONFIG.library.maxDepth)
-  assert.equal(insane.library.maxVisited, DEFAULT_CONFIG.library.maxVisited)
-  assert.equal(insane.library.maxEntriesPerDir, DEFAULT_CONFIG.library.maxEntriesPerDir)
 
-  // 空数组同样视为"没配"，回落到默认跳过表（否则会退化成扫描 node_modules）。
+  // 整个 config 缺失、或塞进完全不认识的字段，都要能正常工作（0.3.0 删掉了 library 一组）。
+  assert.deepEqual(resolveConfig(undefined), DEFAULT_CONFIG)
   assert.deepEqual(
-    resolveConfig({ library: { skipDirectories: [] } }).library.skipDirectories,
-    DEFAULT_CONFIG.library.skipDirectories,
+    resolveConfig({ library: { maxFiles: 10 }, 未知: true }).stream,
+    DEFAULT_CONFIG.stream,
   )
-})
-
-test('跳过目录判定不区分大小写', () => {
-  const list = DEFAULT_CONFIG.library.skipDirectories
-  assert.equal(shouldSkipDirectory('NODE_MODULES', list), true)
-  assert.equal(shouldSkipDirectory('.git', list), true)
-  assert.equal(shouldSkipDirectory('src', list), false)
 })

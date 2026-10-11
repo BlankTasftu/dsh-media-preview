@@ -25,13 +25,4 @@
           # 0.2.0 起不再有"裁短响应"的配置：客户端要多少区间就给多少，
           # 只是用流式发送 —— 发"短 206"会被播放器当成流结束（见 CHANGELOG 0.2.0）。
           streamChunkBytes: 1048576
-        # —— 媒体库扫描（/api/media-index）——
-        library:
-          maxFiles: 400
-          maxDepth: 6
-          maxVisited: 20000
-          maxEntriesPerDir: 500
-          # 扫描时跳过的目录名（小写比较）。留空则用插件内置默认表。
-          # skipDirectories:
-          #   - node_modules
-          #   - .git
+        # 0.3.0 起 media 库（扫描上限那一组 library.* 配置）已随面板删除。

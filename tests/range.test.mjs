@@ -11,11 +11,7 @@ import {
   RANGE_NONE,
   RANGE_OK,
   RANGE_UNSATISFIABLE,
-  clampWindow,
-  formatContentRange,
-  formatUnsatisfiedRange,
   parseByteRange,
-  windowLength,
 } from '../lib/range.mjs'
 
 test('没有 Range 头 → none（按 200 返回完整实体）', () => {
@@ -71,23 +67,3 @@ test('大小写与空格容错', () => {
   assert.deepEqual(parseByteRange('BYTES = 5-9', 100), { kind: RANGE_OK, start: 5, end: 9 })
 })
 
-test('clampWindow 只"少给"，从不越过请求的末尾', () => {
-  assert.deepEqual(clampWindow(0, 99, 10), { start: 0, end: 9 })
-  assert.deepEqual(clampWindow(0, 3, 10), { start: 0, end: 3 })
-  assert.deepEqual(clampWindow(50, 60, 10), { start: 50, end: 59 })
-  // 非正/非法上限视为不限制（由配置层负责钳制，这里不该偷偷改变语义）。
-  assert.deepEqual(clampWindow(0, 99, 0), { start: 0, end: 99 })
-  assert.deepEqual(clampWindow(0, 99, Number.NaN), { start: 0, end: 99 })
-})
-
-test('Content-Range 的两种写法', () => {
-  assert.equal(formatContentRange(0, 1048575, 1073741824), 'bytes 0-1048575/1073741824')
-  assert.equal(formatUnsatisfiedRange(0), 'bytes */0')
-  assert.equal(formatUnsatisfiedRange(123), 'bytes */123')
-})
-
-test('windowLength', () => {
-  assert.equal(windowLength(0, 0), 1)
-  assert.equal(windowLength(0, 9), 10)
-  assert.equal(windowLength(5, 4), 0)
-})

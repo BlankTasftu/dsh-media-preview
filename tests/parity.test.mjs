@@ -13,7 +13,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { AUDIO_MIME, VIDEO_MIME } from '../lib/media-formats.mjs'
-import { INDEX_ROUTE, STREAM_ROUTE } from '../lib/index.js'
+import { STREAM_ROUTE } from '../lib/index.js'
 
 const CLIENT_PATH = fileURLToPath(new URL('../lib/client.js', import.meta.url))
 const clientSource = readFileSync(CLIENT_PATH, 'utf8')
@@ -68,11 +68,9 @@ test('注册的后缀顺序两边一致（VIDEO 在前，AUDIO 在后）', () =>
   ])
 })
 
-test('流式路由与清单路由的路径两边一致', () => {
+test('流式路由路径两边一致', () => {
   assert.equal(stringLiteral('STREAM_ROUTE'), 'api/media')
   assert.equal('/' + stringLiteral('STREAM_ROUTE'), STREAM_ROUTE)
-  assert.equal(stringLiteral('INDEX_ROUTE'), 'api/media-index')
-  assert.equal('/' + stringLiteral('INDEX_ROUTE'), INDEX_ROUTE)
 })
 
 test('客户端只 require 基座里的模块（多一个都会在组合阶段被拒）', () => {

@@ -7,7 +7,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { INDEX_ROUTE, STREAM_ROUTE, serveIndex, serveMedia } from '../lib/index.js'
+import { STREAM_ROUTE, serveMedia } from '../lib/index.js'
 import { resolveConfig } from '../lib/config.mjs'
 import { createFakeCtx, createFakeFs, rangeRequest } from './support/fake-fs.mjs'
 
@@ -18,7 +18,7 @@ const VIDEO = 'C:\\ws\\clip.mp4'
 /**
  * 造一个只有 clip.mp4 的 ctx。
  *
- * @param options - `{ type, streamChunkBytes, withWorkspaces }`。
+ * @param options - `{ type, streamChunkBytes }`。
  * @returns `{ ctx, cfg, fs }`。
  */
 function harness(options = {}) {
@@ -26,8 +26,7 @@ function harness(options = {}) {
     [VIDEO]: { bytes: BYTES, type: options.type },
     'C:\\ws\\song.mp3': { bytes: new Uint8Array([9, 9, 9]) },
   })
-  const workspaces = options.withWorkspaces === false ? undefined : [{ path: 'C:\\ws', title: '工作区' }]
-  const ctx = createFakeCtx(fs, workspaces)
+  const ctx = createFakeCtx(fs)
   const cfg = resolveConfig(
     options.streamChunkBytes === undefined
       ? undefined
@@ -234,62 +233,6 @@ test('整文件流式读取：分多次窗口读完，内存不随文件大小�
   assert.equal(fs.calls.readByteRange, 3)
 })
 
-test('媒体清单：返回工作区里的音视频并标注类别与大小', async () => {
-  const { ctx, cfg } = harness()
-  const url = `http://127.0.0.1:19387${INDEX_ROUTE}`
-  const response = await serveIndex(new Request(url), ctx, cfg, { key: '', at: 0, value: undefined })
-  assert.equal(response.status, 200)
-  assert.equal(response.headers.get('content-type'), 'application/json; charset=utf-8')
-  const payload = await response.json()
-  assert.equal(payload.streamRoute, STREAM_ROUTE)
-  assert.deepEqual(
-    payload.files.map((file) => `${file.name}:${file.kind}:${file.bytes}`),
-    ['clip.mp4:video:12', 'song.mp3:audio:3'],
-  )
-  assert.equal(payload.roots[0].label, '工作区')
-})
-
-test('媒体清单：不接受 ?root 参数（能力面刻意收敛到"只看工作区"）', async () => {
-  const { ctx, cfg } = harness()
-  const base = `http://127.0.0.1:19387${INDEX_ROUTE}`
-  const cache = { key: '', at: 0, value: undefined }
-  const response = await serveIndex(
-    new Request(`${base}?root=${encodeURIComponent('C:\\Windows')}`),
-    ctx,
-    cfg,
-    cache,
-  )
-  assert.equal(response.status, 400)
-  assert.equal(await response.text(), 'root parameter is not supported')
-})
-
-test('媒体清单：第二次相同请求命中短时缓存，不再扫盘', async () => {
-  const { ctx, cfg, fs } = harness()
-  const base = `http://127.0.0.1:19387${INDEX_ROUTE}`
-  const cache = { key: '', at: 0, value: undefined }
-  await serveIndex(new Request(base), ctx, cfg, cache)
-  const afterFirst = fs.calls.listDir
-  await serveIndex(new Request(base), ctx, cfg, cache)
-  assert.equal(fs.calls.listDir, afterFirst)
-  // refresh=1 强制重扫。
-  await serveIndex(new Request(`${base}?refresh=1`), ctx, cfg, cache)
-  assert.ok(fs.calls.listDir > afterFirst)
-})
-
-test('媒体清单：没有注册工作区时回落到 cwd，而不是 500', async () => {
-  const { ctx, cfg } = harness({ withWorkspaces: false })
-  const response = await serveIndex(
-    new Request(`http://127.0.0.1:19387${INDEX_ROUTE}`),
-    ctx,
-    cfg,
-    { key: '', at: 0, value: undefined },
-  )
-  assert.equal(response.status, 200)
-  const payload = await response.json()
-  assert.equal(payload.roots.length, 1)
-  assert.equal(payload.roots[0].label, 'cwd')
-})
-
 test('后端报不出文件大小时：未知长度流式送出，而不是假装文件是空的', async () => {
   // 这是曾经的静默错误：把"没有 size"当成 0，就会回一个 Content-Length: 0 的
   // 空响应 —— 看起来像"文件是空的"。契约里 size 是可选的，必须处理。
@@ -327,12 +270,6 @@ test('所有响应都带加固头（nosniff / 私有缓存 / CSP sandbox）', as
     await serveMedia(mediaRequest(VIDEO, 'bytes=0-1'), ctx, cfg),
     await serveMedia(mediaRequest('C:\\ws\\nope.mp4'), ctx, cfg),
     await serveMedia(mediaRequest('C:\\ws\\a.txt'), ctx, cfg),
-    await serveIndex(
-      new Request(`http://127.0.0.1:19387${INDEX_ROUTE}`),
-      ctx,
-      cfg,
-      { key: '', at: 0, value: undefined },
-    ),
   ]) {
     assert.equal(response.headers.get('x-content-type-options'), 'nosniff', `status ${response.status}`)
     assert.equal(response.headers.get('cache-control'), 'private, no-store', `status ${response.status}`)

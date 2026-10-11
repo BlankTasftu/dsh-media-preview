@@ -1,6 +1,6 @@
 {
   "name": "dsh-media-preview",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "在 DSH 侧边栏预览视频与音频：右侧文档预览标签直接播放 mp4/m4a/mp3 等常用格式（支持 Range 拖动进度），另附一个工作区媒体库面板。",
   "keywords": [
     "dsh",
