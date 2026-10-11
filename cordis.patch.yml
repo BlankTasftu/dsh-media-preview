@@ -1,0 +1,39 @@
+# ============================================================================
+# dsh-media-preview —— DSH bundle patch
+# ============================================================================
+# 把媒体预览插件挂进 profile 配置树。DSH 启动时按 bundle 层栈叠加各插件的
+# patch，本文件负责把 dsh-media-preview 这一行插进去。
+#
+# 安装（本地开发）：
+#   dsh plugin --profile desktop add <本目录绝对路径>
+# 或手工在 profile 的 package.json 里加 "dsh-media-preview": "link:<本目录>"
+# 并把 "dsh-media-preview" 加进 dsh.profile.bundles，然后 pnpm install。
+#
+# 卸载：从 dsh.profile.bundles 里删掉本包名并 pnpm install。
+#
+# 下面 config 块里的数值都会被插件钳制到合法区间（见 lib/config.mjs）：
+# 写错的数字只会回落到默认值，不会让路由注册不上。
+# ============================================================================
+
+- insert:
+    - id: dsh-media-preview
+      name: dsh-media-preview
+      config:
+        # —— 媒体流（/api/media）——
+        stream:
+          # 单次 206 响应最多发多少字节。播放器常发 `Range: bytes=0-`（到文件尾），
+          # 真按字面读会把整部片子一次性读进内存；裁到这个上限后 Content-Range
+          # 如实写出实际范围，播放器接着要下一段 —— 这正是分块媒体服务器的做法。
+          maxChunkBytes: 8388608
+          # 无 Range 的整文件请求（例如"下载"按钮）内部的读取窗口；内存不随文件增长。
+          streamChunkBytes: 1048576
+        # —— 媒体库扫描（/api/media-index）——
+        library:
+          maxFiles: 400
+          maxDepth: 6
+          maxVisited: 20000
+          maxEntriesPerDir: 500
+          # 扫描时跳过的目录名（小写比较）。留空则用插件内置默认表。
+          # skipDirectories:
+          #   - node_modules
+          #   - .git

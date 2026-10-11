@@ -1,0 +1,22 @@
+# 依赖与锁文件（本插件零运行时依赖，锁文件不必入库）
+node_modules/
+pnpm-lock.yaml
+package-lock.json
+yarn.lock
+
+# 测试产生的临时目录
+tests/.tmp-real-fs/
+
+# 本地凭据与勘察脚本 —— 绝不入库
+.env
+.env.*
+*.credentials.yaml
+_recon/
+_backup/
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log
