@@ -72,7 +72,9 @@ node <DSH 运行时>\node\bin\node.exe <DSH 运行时>\pnpm\bin\pnpm.mjs install
 
 **方式 C：本地开发**——把仓库克隆到任意目录，用 `link:<仓库目录>` 代替上面的 git 规格；改代码后重新加载即可生效，不必重新发布。
 
-> 说明：上游作者本机是用 `link:`（方式 C）装的，**git 规格（方式 A/B）按 pnpm 约定书写、未在第二台机器上实测**。若你的环境对 git 依赖有限制，用方式 C 一定可行。
+> 实测记录：`github:` 规格已验证可解析并安装（`pnpm add github:BlankTasftu/dsh-media-preview` → `dsh-media-preview 0.1.0`，约 10 秒）。上游开发机本机是用 `link:`（方式 C）装的，因此**GUI 里点"安装"的完整交互流程**没有在第二台机器上复现过；若那条路遇阻，方式 C 一定可行。
+>
+> 另外：**从 git 安装只会拿到 `lib/` + `docs/` + `README.md`**（`package.json` 的 `files` 字段如此），`tests/`、`tools/` 只对克隆仓库的人可见（要跑测试请克隆）。
 
 卸载：从 `dsh.profile.bundles` 与 `dependencies` 里删掉 `dsh-media-preview`，`pnpm install`，重启。
 
