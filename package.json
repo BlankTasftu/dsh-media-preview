@@ -1,62 +1,62 @@
 {
-  "name": "dsh-media-preview",
-  "version": "0.3.0",
-  "description": "在 DSH 侧边栏预览视频与音频：右侧文档预览标签直接播放 mp4/m4a/mp3 等常用格式（支持 Range 拖动进度），另附一个工作区媒体库面板。",
-  "keywords": [
-    "dsh",
-    "dsh-plugin",
-    "deepseek-harness",
-    "media",
-    "video",
-    "audio",
-    "preview",
-    "sidebar",
-    "mp4",
-    "mp3",
-    "m4a"
-  ],
-  "type": "module",
-  "main": "lib/index.js",
-  "exports": {
-    ".": {
-      "default": "./lib/index.js"
-    },
-    "./client": {
-      "default": "./lib/client.js"
-    },
-    "./package.json": "./package.json",
-    "./cordis.patch.yml": "./cordis.patch.yml"
-  },
-  "files": [
-    "lib",
-    "cordis.patch.yml",
-    "README.md",
-    "docs"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/BlankTasftu/dsh-media-preview.git"
-  },
-  "bugs": {
-    "url": "https://github.com/BlankTasftu/dsh-media-preview/issues"
-  },
-  "homepage": "https://github.com/BlankTasftu/dsh-media-preview#readme",
-  "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "platform": "web",
-      "inject": [
-        "@deepseek-ai/dsh-client-ui-sidebar-documentpreview"
-      ]
-    }
-  },
-  "engines": {
-    "node": ">=22.19.0"
-  },
-  "scripts": {
-    "test": "node --test \"tests/*.test.mjs\""
-  },
-  "license": "MIT"
+    "name":  "dsh-media-preview",
+    "version":  "0.3.1",
+    "description":  "在 DSH 侧边栏预览视频与音频：右侧文档预览标签直接播放 mp4/m4a/mp3 等常用格式（支持 Range 拖动进度），另附一个工作区媒体库面板。",
+    "keywords":  [
+                     "dsh",
+                     "dsh-plugin",
+                     "deepseek-harness",
+                     "media",
+                     "video",
+                     "audio",
+                     "preview",
+                     "sidebar",
+                     "mp4",
+                     "mp3",
+                     "m4a"
+                 ],
+    "type":  "module",
+    "main":  "lib/index.js",
+    "exports":  {
+                    ".":  {
+                              "default":  "./lib/index.js"
+                          },
+                    "./client":  {
+                                     "default":  "./lib/client.js"
+                                 },
+                    "./package.json":  "./package.json",
+                    "./cordis.patch.yml":  "./cordis.patch.yml"
+                },
+    "files":  [
+                  "lib",
+                  "cordis.patch.yml",
+                  "README.md",
+                  "docs"
+              ],
+    "repository":  {
+                       "type":  "git",
+                       "url":  "git+https://github.com/BlankTasftu/dsh-media-preview.git"
+                   },
+    "bugs":  {
+                 "url":  "https://github.com/BlankTasftu/dsh-media-preview/issues"
+             },
+    "homepage":  "https://github.com/BlankTasftu/dsh-media-preview#readme",
+    "dsh":  {
+                "bundle":  {
+                               "patch":  "./cordis.patch.yml"
+                           },
+                "client":  {
+                               "platform":  "web",
+                               "inject":  [
+                                              "@deepseek-ai/dsh-client-ui-sidebar-documentpreview"
+                                          ]
+                           }
+            },
+    "engines":  {
+                    "node":  "\u003e=22.19.0"
+                },
+    "scripts":  {
+                    "test":  "node --test \"tests/*.test.mjs\""
+                },
+    "license":  "MIT"
 }

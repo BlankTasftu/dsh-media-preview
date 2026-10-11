@@ -192,9 +192,13 @@ node --test "tests/*.test.mjs"     # 70 个用例
 
 `tests/integration-real-fs.test.mjs` 需要真实素材：把任意 mp3 放进仓库旁的 `media-samples/`，或用 `DSH_MEDIA_SAMPLE_DIR=<目录>` 指定；没有素材时这一层**跳过而不是假装通过**。
 
-代码与安全审计的结果、以及"只以插件形式运行"的证据，见 [`docs/VERIFICATION.md`](docs/VERIFICATION.md) 第五、六节。两个只读审计脚本随仓库发布，可随时复跑：
+代码与安全审计的结果、以及"只以插件形式运行"的证据，见 [`docs/VERIFICATION.md`](docs/VERIFICATION.md) 第五、六节。三个只读审计脚本随仓库发布，可随时复跑：
 
 ```powershell
 node tools/audit-deadcode.mjs .       # 死代码 / 未使用的 import
 node tools/audit-capabilities.mjs .   # 能力面：写盘、进程、动态求值、外部网络、鉴权旁路…
+node tools/audit-privacy.mjs .        # 隐私：本机绝对路径 / 家目录 / 邮箱 / 密钥形状
 ```
+
+`audit-privacy.mjs` 是 0.3.1 加的：0.3.0 曾把本机绝对路径随文档带进公开仓库（见 CHANGELOG 0.3.1）。
+它的白名单只有测试用的合成夹具（`C:\ws`、`C:\Users\someone`、`/home/u`），判定逻辑**不依赖任何"用户是谁"的预设**。

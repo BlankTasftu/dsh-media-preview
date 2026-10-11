@@ -10,7 +10,7 @@
 ## 一、自动化测试（70/70 通过）
 
 ```powershell
-cd E:\DeepSeek\插件\dsh-media-preview
+cd <仓库目录>
 node --test "tests/*.test.mjs"
 # ℹ tests 81  ℹ pass 81  ℹ fail 0
 ```
@@ -43,7 +43,7 @@ node --test "tests/*.test.mjs"
 
 ## 二、从真实源码核实过的宿主契约
 
-以下每一条都来自 `D:\DeepSeekHarness\resources\app.asar` 里的实际实现，不是文档推测。它们决定了本插件为什么这样写。
+以下每一条都来自 `<DSH 安装目录>\resources\app.asar` 里的实际实现，不是文档推测。它们决定了本插件为什么这样写。
 
 | 事实 | 来源 |
 |---|---|
@@ -73,9 +73,9 @@ node --test "tests/*.test.mjs"
 2026-10-11 用 DSH 自己的插件管理装进 `desktop` profile：
 
 ```
-install_bundle  link:E:/DeepSeek/插件/dsh-media-preview
+install_bundle  link:<仓库目录>
 → stage: enable · changed: true · application: applied
-→ pnpm: + dsh-media-preview link:E:/DeepSeek/插件/dsh-media-preview   (exit 0)
+→ pnpm: + dsh-media-preview link:<仓库目录>   (exit 0)
 ```
 
 **不需要重启**，宿主与浏览器两侧当场生效。以下都是从安装后的**实时 slot 树 / 插件清单**读到的，不是推断：
@@ -169,8 +169,8 @@ seek 到文件尾部读出索引才能起播。而 mp3 是流式格式、不需�
 两个审计脚本（只读）在 `_recon/` 下，可复跑：
 
 ```powershell
-node _recon/audit-deadcode-plugin.mjs "E:\DeepSeek\插件\dsh-media-preview"
-node _recon/audit-plugin-safety.mjs  "E:\DeepSeek\插件\dsh-media-preview"
+node <死代码审计脚本> <仓库目录>
+node <能力面审计脚本> <仓库目录>
 ```
 
 ### 5.1 死代码
@@ -231,7 +231,7 @@ node _recon/audit-plugin-safety.mjs  "E:\DeepSeek\插件\dsh-media-preview"
 | 断言 | 证据 |
 |---|---|
 | DSH 程序与资源未被修改 | `app.asar`、`app-update.yml` 的 mtime 仍是 **2026/9/29 18:34:26**（安装日期，今天没有变动） |
-| 没有 DSH 应用文件被写过 | 遍历 `D:\DeepSeekHarness`，今日改动的 25 个文件**全部**是 `resources\runtime\...\python\Lib\**\__pycache__\*.pyc` —— 那是我用捆绑 Python 校验 YAML 时解释器自己写的字节码缓存，**与插件无关**（用户选择保留，未清理） |
+| 没有 DSH 应用文件被写过 | 遍历 DSH 安装目录，今日改动的 25 个文件**全部**是 `resources\runtime\...\python\Lib\**\__pycache__\*.pyc` —— 那是我用捆绑 Python 校验 YAML 时解释器自己写的字节码缓存，**与插件无关**（用户选择保留，未清理） |
 | 补丁只新增、不覆盖 | 解析 `cordis.patch.yml`：顶层 1 个条目、键只有 `insert`、1 行 `{id: dsh-media-preview, name: dsh-media-preview}` —— **没有任何 id-targeted 覆盖或 disable** |
 | 装的落点只有 profile | 唯一外部改动是 profile 的 `package.json` / `pnpm-lock.yaml` / `.modules.yaml` / `.pnpm-workspace-state-v1.json`（13:45:50，插件管理器所为）与 `node_modules\dsh-media-preview` 这个 junction —— 这是 DSH 自己的插件安装机制 |
 | 只用公开扩展点 | 宿主：`ctx.connection.fetch.register` / `ctx.fs`；客户端：`ctx.documentPreviews.register` / `ctx.slots.register` / `ctx.locale.register` / `ctx.effect`。不 patch 任何宿主对象，不改任何内置 ID |
